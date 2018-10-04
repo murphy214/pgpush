@@ -6,7 +6,6 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/paulmach/go.geojson"
 	"reflect"
-	"strconv"
 	"strings"
 )
 
@@ -21,7 +20,7 @@ var BigInt ColumnType = "bigint"     // int
 var Decimal ColumnType = "decimal" // float
 var Numeric ColumnType = "numeric" // float
 var Real ColumnType = "real"       // float
-var Double ColumnType = "double"   // float
+//var Double ColumnType = "double"   // float
 
 // serial types
 var SmallSerial ColumnType = "smallserial" // int
@@ -58,7 +57,7 @@ var TypeMap = map[ColumnType]string{
 	Decimal: "float",
 	Numeric: "float",
 	Real:    "float",
-	Double:  "float",
+	//Double:  "float",
 
 	SmallSerial: "int",
 	Serial:      "int",
@@ -90,37 +89,42 @@ type Column struct {
 
 // table structrue
 type Table struct {
-	TableName  string
-	InsertStmt string
-	CreateStmt string
-	ColumnMap  map[string]string
-	Tx         *pgx.Tx
-	Columns    []Column
-	Inserts    int
-	Conn       *pgx.ConnPool
+	TableName            string
+	InsertStmt           string
+	CreateStmt           string
+	CurrentInsertStmt    string
+	InsertValue          string
+	CurrentInterfaceList []interface{}
+	Count                int
+	ColumnMap            map[string]string
+	Tx                   *pgx.Tx
+	Columns              []Column
+	Inserts              int
+	Conn                 *pgx.ConnPool
 }
 
 // Creates a table structure to map to.
 func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) (*Table, error) {
 	columnmap := map[string]string{}
 	createlist, insertlist := []string{}, []string{}
-	for i, column := range columns {
+	for _, column := range columns {
 
 		mytype := TypeMap[column.Type]
 		val := fmt.Sprintf("%s %s", column.Name, string(column.Type))
 		if mytype != "geometry" {
 			columnmap[column.Name] = mytype
-			insertlist = append(insertlist, "$"+strconv.Itoa(i+1))
+			insertlist = append(insertlist, "$%d")
 		} else if mytype == "geometry" {
-			insertval := fmt.Sprintf("ST_GeomFromWKB(%s,4326)", "$"+strconv.Itoa(i+1))
+			insertval := "ST_GeomFromWKB($%d,4326)"
 			insertlist = append(insertlist, insertval)
 		}
 		createlist = append(createlist, val)
 	}
-	createval := strings.Join(createlist, ", ")
+	createval := strings.Join(createlist, ",")
 	createstmt := fmt.Sprintf("CREATE TABLE %s (%s);", tablename, createval)
-	insertval := strings.Join(insertlist, ", ")
-	insertstmt := fmt.Sprintf("INSERT INTO %s VALUES (%s);", tablename, insertval)
+	insertval := strings.Join(insertlist, ",")
+	insertstmt := fmt.Sprintf("INSERT INTO %s VALUES ", tablename)
+	insertvalupdate := fmt.Sprintf("(%s), ", insertval)
 
 	p, err := pgx.NewConnPool(config)
 	if err != nil {
@@ -139,14 +143,16 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 	}
 
 	return &Table{
-		TableName:  tablename,
-		InsertStmt: insertstmt,
-		CreateStmt: createstmt,
-		ColumnMap:  columnmap,
-		Tx:         tx,
-		Columns:    columns,
-		Inserts:    0,
-		Conn:       p,
+		TableName:         tablename,
+		InsertStmt:        insertstmt,
+		CreateStmt:        createstmt,
+		ColumnMap:         columnmap,
+		Tx:                tx,
+		Columns:           columns,
+		Inserts:           0,
+		Conn:              p,
+		InsertValue:       insertvalupdate,
+		CurrentInsertStmt: insertstmt,
 	}, nil
 
 }
@@ -186,9 +192,11 @@ func ParseValue(value interface{}) (interface{}, string) {
 // adds a feature to the postgis table
 func (table *Table) AddFeature(feature *geojson.Feature) error {
 	newlist := []interface{}{}
-	for _, i := range table.Columns {
+	newlist2 := []interface{}{}
+	for pos, i := range table.Columns {
+		newlist2 = append(newlist2, table.Count*len(table.Columns)+pos+1)
 
-		if string(i.Type) == "geometry" {
+		if string(i.Name) == "geometry" {
 			geomb, err := EncodeGeometryWKB(feature.Geometry)
 			if err != nil {
 				return err
@@ -197,67 +205,48 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 			newlist = append(newlist, geomb)
 		} else {
 			val, boolval := feature.Properties[i.Name]
-
-			if boolval {
-				newval, typeval := ParseValue(val)
-				if typeval != string(i.Type) {
-					if typeval == "int" && string(i.Type) == "string" {
-						myval := newval.(int)
-						addval := strconv.Itoa(myval)
-						newlist = append(newlist, addval)
-					} else if typeval == "int" && string(i.Type) == "float" {
-						myval := newval.(int)
-						addval := float64(myval)
-						newlist = append(newlist, addval)
-					} else if typeval == "float" && string(i.Type) == "int" {
-						myval := newval.(float64)
-						addval := float64(myval)
-						newlist = append(newlist, addval)
-					} else if typeval == "float" && string(i.Type) == "string" {
-						myval := newval.(float64)
-						addval := fmt.Sprintf("%f", myval)
-						newlist = append(newlist, addval)
-					} else if typeval == "string" && string(i.Type) == "int" {
-						myval := newval.(string)
-						addval, err := strconv.ParseInt(myval, 10, 64)
-						var addval2 int
-						if err != nil {
-							addval2 = 0
-						} else {
-							addval2 = int(addval)
-						}
-						newlist = append(newlist, addval2)
-					} else if typeval == "string" && string(i.Type) == "float" {
-						myval := newval.(string)
-						addval, err := strconv.ParseFloat(myval, 64)
-						var addval2 float64
-						if err != nil {
-							addval2 = 0.0
-						} else {
-							addval2 = float64(addval)
-						}
-						newlist = append(newlist, addval2)
-					} else {
-						newlist = append(newlist, nil)
-					}
-
-				} else {
-					newlist = append(newlist, newval)
-				}
+			if !boolval {
+				newlist = append(newlist, " ")
 			} else {
-				newlist = append(newlist, nil)
+				newlist = append(newlist, fmt.Sprint(val))
 			}
 		}
 	}
-	_, err := table.Tx.Exec(table.InsertStmt, newlist...)
-	if err == nil {
-		table.Inserts++
+	table.CurrentInterfaceList = append(table.CurrentInterfaceList, newlist...)
+	table.CurrentInsertStmt += fmt.Sprintf(table.InsertValue, newlist2...)
+	table.Count++
+
+	//
+	if table.Count != 5000 {
+
+	} else {
+
+		table.CurrentInsertStmt = table.CurrentInsertStmt[0 : len(table.CurrentInsertStmt)-2]
+		_, err := table.Tx.Exec(table.CurrentInsertStmt, table.CurrentInterfaceList...)
+
+		if err != nil {
+			fmt.Println(err)
+		}
+		table.Count = 0
+		table.CurrentInsertStmt = table.InsertStmt
+		table.CurrentInterfaceList = []interface{}{}
 	}
-	return err
+
+	return nil
 }
 
 // commits the given features and refreshes the transaction
 func (table *Table) Commit() error {
+	if table.Count > 0 {
+		table.CurrentInsertStmt = table.CurrentInsertStmt[0 : len(table.CurrentInsertStmt)-2]
+		_, err := table.Tx.Exec(table.CurrentInsertStmt, table.CurrentInterfaceList...)
+		if err != nil {
+			fmt.Println(err)
+		}
+		table.Count = 0
+		table.CurrentInsertStmt = table.InsertStmt
+		table.CurrentInterfaceList = []interface{}{}
+	}
 	err := table.Tx.Commit()
 	if err != nil {
 		return err
@@ -265,4 +254,57 @@ func (table *Table) Commit() error {
 	tx, err := table.Conn.Begin()
 	table.Tx = tx
 	return err
+}
+
+// reads a given table from schema so features can be added in postgis
+func ReadTable(tablename string, config pgx.ConnPoolConfig) *Table {
+	p, err := pgx.NewConnPool(config)
+	if err != nil {
+		return &Table{}
+	}
+	tx, err := p.Begin()
+	if err != nil {
+		return &Table{}
+	}
+
+	result, err := tx.Query("select column_name, data_type from INFORMATION_SCHEMA.COLUMNS where table_name = 'new';")
+	if err != nil {
+		fmt.Println(err)
+	}
+	columns := []Column{}
+	raw := map[string]string{}
+	for result.Next() {
+		var key, typeval string
+		err = result.Scan(&key, &typeval)
+		if err != nil {
+			fmt.Println(err)
+		}
+		raw[key] = typeval
+		columns = append(columns, Column{Name: key})
+	}
+
+	insertlist := []string{}
+	for _, column := range columns {
+		if column.Name != "geometry" {
+			insertlist = append(insertlist, "$%d")
+		} else if column.Name == "geometry" {
+			insertval := "ST_GeomFromWKB($%d,4326)"
+			insertlist = append(insertlist, insertval)
+		}
+	}
+
+	insertval := strings.Join(insertlist, ",")
+	insertstmt := fmt.Sprintf("INSERT INTO %s VALUES ", tablename)
+	insertvalupdate := fmt.Sprintf("(%s), ", insertval)
+
+	return &Table{
+		TableName:         tablename,
+		InsertStmt:        insertstmt,
+		Tx:                tx,
+		Columns:           columns,
+		Inserts:           0,
+		Conn:              p,
+		InsertValue:       insertvalupdate,
+		CurrentInsertStmt: insertstmt,
+	}
 }
