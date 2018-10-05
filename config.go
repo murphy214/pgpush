@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var DefaultIncrement = 5000
+
 type ColumnType string
 
 // int types
@@ -49,6 +51,9 @@ var Boolean ColumnType = "boolean" // bool
 // geometry data types
 var Geometry ColumnType = "geometry" // geometry
 
+// hstore column type
+var HStore ColumnType = "hstore"
+
 var TypeMap = map[ColumnType]string{
 	SmallInt: "int",
 	Integer:  "int",
@@ -79,6 +84,8 @@ var TypeMap = map[ColumnType]string{
 	Boolean: "bool",
 
 	Geometry: "geometry",
+
+	HStore: "hstore",
 }
 
 // column data type
@@ -100,6 +107,8 @@ type Table struct {
 	Tx                   *pgx.Tx
 	Columns              []Column
 	Inserts              int
+	HStoreFormatString   string
+	HStoreColumns        []string
 	Conn                 *pgx.ConnPool
 }
 
@@ -107,28 +116,80 @@ type Table struct {
 func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) (*Table, error) {
 	columnmap := map[string]string{}
 	createlist, insertlist := []string{}, []string{}
+	var hstore_bool bool
 	for _, column := range columns {
-
+		mytype := TypeMap[column.Type]
+		if mytype == "hstore" {
+			hstore_bool = true
+		}
+	}
+	hstore_lines := []string{}
+	hstore_columns := []string{}
+	//pos := 0
+	new_columns := []Column{}
+	column_names := []string{}
+	for _, column := range columns {
+		var hstore_val bool
 		mytype := TypeMap[column.Type]
 		val := fmt.Sprintf("%s %s", column.Name, string(column.Type))
-		if mytype != "geometry" {
+		if hstore_bool && mytype == "string" {
+			columnmap[column.Name] = mytype
+			hstore_lines = append(hstore_lines, fmt.Sprintf(`"%s" `, column.Name)+`=> "%s",`)
+			hstore_columns = append(hstore_columns, column.Name)
+			hstore_val = true
+		} else if mytype == "hstore" {
+			insertlist = append(insertlist, "$%d")
+			//pos++
+			column_names = append(column_names, column.Name)
+			new_columns = append(new_columns, column)
+
+		} else if mytype != "geometry" {
 			columnmap[column.Name] = mytype
 			insertlist = append(insertlist, "$%d")
+			//pos++
+			new_columns = append(new_columns, column)
+			column_names = append(column_names, column.Name)
 		} else if mytype == "geometry" {
 			insertval := "ST_GeomFromWKB($%d,4326)"
 			insertlist = append(insertlist, insertval)
+			//pos++
+			new_columns = append(new_columns, column)
+			column_names = append(column_names, column.Name)
 		}
-		createlist = append(createlist, val)
+		if !hstore_val {
+			createlist = append(createlist, val)
+		}
 	}
+
+	hstore_string := ""
+	if hstore_bool {
+		val := strings.Join(hstore_lines, "\n")
+		val = val[:len(val)-1]
+		hstore_string = val
+		columns = new_columns
+	}
+	column_string := strings.Join(column_names, ", ")
 	createval := strings.Join(createlist, ",")
 	createstmt := fmt.Sprintf("CREATE TABLE %s (%s);", tablename, createval)
 	insertval := strings.Join(insertlist, ",")
-	insertstmt := fmt.Sprintf("INSERT INTO %s VALUES ", tablename)
+	insertstmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", tablename, column_string)
 	insertvalupdate := fmt.Sprintf("(%s), ", insertval)
 
 	p, err := pgx.NewConnPool(config)
 	if err != nil {
 		return &Table{}, err
+	}
+
+	// creating extension for postgis
+	_, err = p.Exec("create extension postgis;")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// creating extension for hstore
+	_, err = p.Exec("create extension hstore;")
+	if err != nil {
+		fmt.Println(err)
 	}
 
 	// exectuing create table stmt
@@ -143,16 +204,18 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 	}
 
 	return &Table{
-		TableName:         tablename,
-		InsertStmt:        insertstmt,
-		CreateStmt:        createstmt,
-		ColumnMap:         columnmap,
-		Tx:                tx,
-		Columns:           columns,
-		Inserts:           0,
-		Conn:              p,
-		InsertValue:       insertvalupdate,
-		CurrentInsertStmt: insertstmt,
+		TableName:          tablename,
+		InsertStmt:         insertstmt,
+		CreateStmt:         createstmt,
+		ColumnMap:          columnmap,
+		Tx:                 tx,
+		Columns:            columns,
+		Inserts:            0,
+		Conn:               p,
+		InsertValue:        insertvalupdate,
+		CurrentInsertStmt:  insertstmt,
+		HStoreColumns:      hstore_columns,
+		HStoreFormatString: hstore_string,
 	}, nil
 
 }
@@ -195,8 +258,16 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 	newlist2 := []interface{}{}
 	for pos, i := range table.Columns {
 		newlist2 = append(newlist2, table.Count*len(table.Columns)+pos+1)
+		if string(i.Type) == "hstore" {
+			hstore_vals := []interface{}{}
+			for _, name := range table.HStoreColumns {
+				hstore_vals = append(hstore_vals, fmt.Sprint(feature.Properties[name]))
+			}
+			newval := fmt.Sprintf(table.HStoreFormatString, hstore_vals...)
+			fmt.Println(newval)
+			newlist = append(newlist, newval)
 
-		if string(i.Name) == "geometry" {
+		} else if string(i.Name) == "geometry" {
 			geomb, err := EncodeGeometryWKB(feature.Geometry)
 			if err != nil {
 				return err
@@ -217,7 +288,7 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 	table.Count++
 
 	//
-	if table.Count != 5000 {
+	if table.Count != DefaultIncrement {
 
 	} else {
 
