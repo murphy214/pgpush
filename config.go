@@ -1,4 +1,4 @@
-package postgis
+package pgpush
 
 import (
 	"fmt"
@@ -181,16 +181,10 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 	}
 
 	// creating extension for postgis
-	_, err = p.Exec("create extension postgis;")
-	if err != nil {
-		fmt.Println(err)
-	}
+	_, _ = p.Exec("create extension postgis;")
 
 	// creating extension for hstore
-	_, err = p.Exec("create extension hstore;")
-	if err != nil {
-		fmt.Println(err)
-	}
+	_, _ = p.Exec("create extension hstore;")
 
 	// exectuing create table stmt
 	_, err = p.Exec(createstmt)
@@ -264,7 +258,6 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 				hstore_vals = append(hstore_vals, fmt.Sprint(feature.Properties[name]))
 			}
 			newval := fmt.Sprintf(table.HStoreFormatString, hstore_vals...)
-			fmt.Println(newval)
 			newlist = append(newlist, newval)
 
 		} else if string(i.Name) == "geometry" {

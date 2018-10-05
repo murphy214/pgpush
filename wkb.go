@@ -1,6 +1,6 @@
-package postgis
+package pgpush
 
-// sepcification at http://edndoc.esri.com/arcsde/9.1/general_topics/wkb_representation.htm
+// specification at http://edndoc.esri.com/arcsde/9.1/general_topics/wkb_representation.htm
 
 import (
 	"bytes"
