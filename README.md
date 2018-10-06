@@ -1,6 +1,6 @@
 ### What is it? 
 
-Shoving geospatial data into a table is rather annoying for me usually, and is usually kind of hacky, this library provides an abstraction for creating tables with a certain schema and shoving inserting geojson features into said table. Currently it provides support for things like hstore and handles the logic for getting out those string fields as well. The column list currently assumes a one-to-one mapping of field keys in a geojson feature to fields in the desired table. 
+Shoving geospatial data into a table is rather annoying for me usually, and is usually kind of hacky, this library provides an abstraction for creating tables with a certain schema and inserting geojson features into said table. Currently it provides support for things like hstore and handles the logic for retrieving those related string fields as well. The insertion API currently assumes a one-to-one mapping of field keys in a geojson feature to fields in the desired table. 
 
 ### TO-DO
 
@@ -21,9 +21,9 @@ Below shows a small usage example for the insertion API.
 package main
 
 import (
-	"./postgis_driver"
 	"fmt"
 	"github.com/jackc/pgx"
+	"github.com/murphy214/pgpush"
 	"github.com/paulmach/go.geojson"
 )
 
@@ -45,12 +45,12 @@ func main() {
 	// columns configuration
 	// if any string field is given and an hstore column exists
 	// each string column will be placed in the hstore field
-	columns := []postgis.Column{
-		{Name: "strfield1", Type: postgis.VarChar},
-		{Name: "strfield2", Type: postgis.VarChar},
-		{Name: "strfield3", Type: postgis.VarChar},
-		{Name: "hstore_tags", Type: postgis.HStore},
-		{Name: "geometry", Type: postgis.Geometry},
+	columns := []pgpush.Column{
+		{Name: "strfield1", Type: pgpush.VarChar},
+		{Name: "strfield2", Type: pgpush.VarChar},
+		{Name: "strfield3", Type: pgpush.VarChar},
+		{Name: "hstore_tags", Type: pgpush.HStore},
+		{Name: "geometry", Type: pgpush.Geometry},
 	}
 
 	// creaing geojson feature
@@ -59,7 +59,7 @@ func main() {
 	feature.Properties = mymap
 
 	// creating table
-	table, err := postgis.CreateTable("new_table", columns, poolconfig)
+	table, err := pgpush.CreateTable("new_table", columns, poolconfig)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -76,6 +76,7 @@ func main() {
 		fmt.Println(err)
 	}
 }
+
 
 ```
 
