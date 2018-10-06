@@ -6,10 +6,13 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/paulmach/go.geojson"
 	"reflect"
+	"strconv"
 	"strings"
 )
 
 var DefaultIncrement = 5000
+var DefaultSRID = 4326
+var WebMercatorSRID = 3857
 
 type ColumnType string
 
@@ -52,7 +55,7 @@ var Boolean ColumnType = "boolean" // bool
 var Geometry ColumnType = "geometry" // geometry
 
 // hstore column type
-var HStore ColumnType = "hstore"
+var HStore ColumnType = "hstore_tags"
 
 var TypeMap = map[ColumnType]string{
 	SmallInt: "int",
@@ -90,8 +93,10 @@ var TypeMap = map[ColumnType]string{
 
 // column data type
 type Column struct {
-	Name string
-	Type ColumnType
+	Name       string
+	Type       ColumnType
+	TargetSRID int
+	GivenSRID  int
 }
 
 // table structrue
@@ -150,7 +155,19 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 			new_columns = append(new_columns, column)
 			column_names = append(column_names, column.Name)
 		} else if mytype == "geometry" {
-			insertval := "ST_GeomFromWKB($%d,4326)"
+			if column.GivenSRID == 0 {
+				column.GivenSRID = DefaultSRID
+			}
+			if column.TargetSRID == 0 {
+				column.TargetSRID = DefaultSRID
+			}
+			var insertval string
+			if column.GivenSRID != column.TargetSRID {
+				insertval = "ST_Transform(" + "ST_GeomFromWKB($%d," + strconv.Itoa(column.GivenSRID) + ")" + fmt.Sprintf(",%d)", column.TargetSRID)
+			} else {
+				insertval = "ST_GeomFromWKB($%d," + strconv.Itoa(column.GivenSRID) + ")"
+			}
+			//insertval := "ST_GeomFromWKB($%d," + strconv.Itoa(column.GivenSRID) + ")"
 			insertlist = append(insertlist, insertval)
 			//pos++
 			new_columns = append(new_columns, column)
@@ -269,8 +286,9 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 			newlist = append(newlist, geomb)
 		} else {
 			val, boolval := feature.Properties[i.Name]
+			//fmt.Println(i, val, boolval)
 			if !boolval {
-				newlist = append(newlist, " ")
+				newlist = append(newlist, nil)
 			} else {
 				newlist = append(newlist, fmt.Sprint(val))
 			}
