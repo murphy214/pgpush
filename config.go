@@ -1,6 +1,7 @@
 package pgpush
 
 import (
+	"errors"
 	"fmt"
 	"github.com/jackc/pgx"
 	_ "github.com/lib/pq"
@@ -264,8 +265,39 @@ func ParseValue(value interface{}) (interface{}, string) {
 	return myval, typeval
 }
 
+func ValidPolygonFeature(feature *geojson.Feature) bool {
+	// simpl
+	totalbool := false
+	totalbool = len(feature.Geometry.Polygon) == 0
+	if feature.Geometry.Type == "Polygon" {
+		for _, i := range feature.Geometry.Polygon {
+			boolval := len(i) < 4
+			if boolval {
+				totalbool = true
+			}
+		}
+	} else {
+		for _, i := range feature.Geometry.MultiPolygon {
+			for _, ii := range i {
+				boolval := len(ii) < 4
+				if boolval {
+					totalbool = true
+				}
+			}
+		}
+	}
+	return !totalbool
+}
+
 // adds a feature to the postgis table
 func (table *Table) AddFeature(feature *geojson.Feature) error {
+	if strings.Contains(string(feature.Geometry.Type), "Polygon") {
+		totalbool := ValidPolygonFeature(feature)
+		if !totalbool {
+			return errors.New("Polygon Geometry Invalid.")
+		}
+	}
+
 	newlist := []interface{}{}
 	newlist2 := []interface{}{}
 	for pos, i := range table.Columns {
@@ -287,12 +319,13 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 			newlist = append(newlist, geomb)
 		} else {
 			val, boolval := feature.Properties[i.Name]
-			//fmt.Println(i, val, boolval)
+			//fmt.Println(i, val, boolval)x
 			if !boolval {
 				newlist = append(newlist, nil)
 			} else {
 				newlist = append(newlist, fmt.Sprint(val))
 			}
+
 		}
 	}
 	table.CurrentInterfaceList = append(table.CurrentInterfaceList, newlist...)
@@ -303,7 +336,8 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 	if table.Count != DefaultIncrement {
 
 	} else {
-
+		//oldtable := table
+		//go func(oldtable *pgpush.Table) {
 		table.CurrentInsertStmt = table.CurrentInsertStmt[0 : len(table.CurrentInsertStmt)-2]
 		_, err := table.Tx.Exec(table.CurrentInsertStmt, table.CurrentInterfaceList...)
 
