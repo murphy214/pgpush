@@ -142,11 +142,12 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 			hstore_lines = append(hstore_lines, fmt.Sprintf(`"%s" `, column.Name)+`=> "%s",`)
 			hstore_columns = append(hstore_columns, column.Name)
 			hstore_val = true
-		} else if mytype == "hstore" {
+		} else if strings.Contains(mytype, "hstore") {
 			insertlist = append(insertlist, "$%d")
 			//pos++
 			column_names = append(column_names, column.Name)
 			new_columns = append(new_columns, column)
+			val = fmt.Sprintf("%s %s", column.Name, "hstore")
 
 		} else if mytype != "geometry" {
 			columnmap[column.Name] = mytype
@@ -269,7 +270,7 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 	newlist2 := []interface{}{}
 	for pos, i := range table.Columns {
 		newlist2 = append(newlist2, table.Count*len(table.Columns)+pos+1)
-		if string(i.Type) == "hstore" {
+		if string(i.Type) == "hstore_tags" {
 			hstore_vals := []interface{}{}
 			for _, name := range table.HStoreColumns {
 				hstore_vals = append(hstore_vals, fmt.Sprint(feature.Properties[name]))
