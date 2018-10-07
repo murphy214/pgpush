@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var DefaultIncrement = 5000
@@ -116,6 +117,7 @@ type Table struct {
 	HStoreFormatString   string
 	HStoreColumns        []string
 	Conn                 *pgx.ConnPool
+	Wg                   sync.WaitGroup
 }
 
 // Creates a table structure to map to.
@@ -215,8 +217,9 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 	if err != nil {
 		return &Table{}, err
 	}
-
+	var wg sync.WaitGroup
 	return &Table{
+		Wg:                 wg,
 		TableName:          tablename,
 		InsertStmt:         insertstmt,
 		CreateStmt:         createstmt,
@@ -336,17 +339,15 @@ func (table *Table) AddFeature(feature *geojson.Feature) error {
 	if table.Count != DefaultIncrement {
 
 	} else {
-		//oldtable := table
+		//var oldtable *Table
+		//*oldtable = *table
 		//go func(oldtable *pgpush.Table) {
 		table.CurrentInsertStmt = table.CurrentInsertStmt[0 : len(table.CurrentInsertStmt)-2]
-		_, err := table.Tx.Exec(table.CurrentInsertStmt, table.CurrentInterfaceList...)
-
-		if err != nil {
-			fmt.Println(err)
-		}
+		table.Tx.Exec(table.CurrentInsertStmt, table.CurrentInterfaceList...)
 		table.Count = 0
 		table.CurrentInsertStmt = table.InsertStmt
 		table.CurrentInterfaceList = []interface{}{}
+
 	}
 
 	return nil
