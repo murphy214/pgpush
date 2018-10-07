@@ -9,10 +9,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 )
 
-var DefaultIncrement = 5000
+var DefaultIncrement = 1000
 var DefaultSRID = 4326
 var WebMercatorSRID = 3857
 
@@ -117,7 +116,6 @@ type Table struct {
 	HStoreFormatString   string
 	HStoreColumns        []string
 	Conn                 *pgx.ConnPool
-	Wg                   sync.WaitGroup
 }
 
 // Creates a table structure to map to.
@@ -217,9 +215,7 @@ func CreateTable(tablename string, columns []Column, config pgx.ConnPoolConfig) 
 	if err != nil {
 		return &Table{}, err
 	}
-	var wg sync.WaitGroup
 	return &Table{
-		Wg:                 wg,
 		TableName:          tablename,
 		InsertStmt:         insertstmt,
 		CreateStmt:         createstmt,
